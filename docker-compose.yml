@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gloria
+      POSTGRES_USER: gloria
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gloria -d gloria"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Force the container-internal DB hostname regardless of what's in .env
+      DATABASE_URL: postgresql://gloria:change-me@db:5432/gloria
+      CHROMA_DIR: /app/data/chroma
+      UNIVERSITY_DATA_DIR: /app/data/university
+      HEC_DATA_DIR: /app/data/hec
+      PROCESSED_DIR: /app/data/processed
+      # Chroma's telemetry client is incompatible with the installed posthog
+      # and only prints "Failed to send telemetry event" noise.
+      ANONYMIZED_TELEMETRY: "False"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount the shared data folder so PDFs / JSON / chroma live on the host.
+      - ./data:/app/data
+      - ./tests:/app/tests
+      # Keep downloaded embedding models across container recreates.
+      - hf_cache:/root/.cache/huggingface
+    ports:
+      - "8080:8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      GLORIA_API_URL: http://backend:8000
+      GLORIA_API_KEY: ${GLORIA_API_KEY:-set-me-in-root-.env}
+    depends_on:
+      - backend
+    ports:
+      - "3001:3000"
+
+volumes:
+  db_data:
+  hf_cache:
